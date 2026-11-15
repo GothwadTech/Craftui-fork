@@ -195,7 +195,8 @@ mod tests {
         storage.save("hello").unwrap();
         assert_eq!(handle.contents().as_deref(), Some("hello"));
         assert_eq!(handle.save_count(), 1);
-        assert_eq!(MemoryStorage::with_contents("x").load().unwrap().as_deref(), Some("x"));
+        let loaded = MemoryStorage::with_contents("x").load().unwrap();
+        assert_eq!(loaded.as_deref(), Some("x"));
     }
 
     #[test]
@@ -245,7 +246,8 @@ mod tests {
         std::fs::write(&path, [0x7b, 0xff, 0xfe, 0x7d]).unwrap();
 
         let storage = FileStorage::new(&path);
-        assert!(storage.load().is_err(), "invalid UTF-8 must be a read error");
+        let loaded = storage.load();
+        assert!(loaded.is_err(), "invalid UTF-8 must be an error");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
