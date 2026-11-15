@@ -19,7 +19,7 @@ import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 
 const [bundleDirArg, outDirArg] = process.argv.slice(2);
 if (!bundleDirArg || !outDirArg) {
@@ -56,7 +56,11 @@ const MIME = {
 const server = createServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
   const file = normalize(join(bundleDir, path === "/" ? "index.html" : path));
-  if (!file.startsWith(bundleDir) || !existsSync(file) || !statSync(file).isFile()) {
+  // Require a separator boundary: a prefix check alone also accepts sibling
+  // directories that share the bundle's name (for example
+  // `/x/dist/notes-web-secret` for `bundleDir = /x/dist/notes-web`).
+  const inside = file === bundleDir || file.startsWith(bundleDir + sep);
+  if (!inside || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404).end("not found");
     return;
   }
@@ -92,6 +96,12 @@ const chrome = spawn(
   ],
   { stdio: ["ignore", "ignore", "pipe"] },
 );
+
+// Startup below awaits (the DevTools URL and the WebSocket) and can reject. Node
+// then exits on the unhandled rejection and the cleanup at the end never runs,
+// so kill Chrome from an exit hook as well. The normal path still calls
+// `chrome.kill()` before it exits, which makes this a no-op.
+process.on("exit", () => chrome.kill());
 
 const browserWsUrl = await new Promise((done, fail) => {
   let stderr = "";
