@@ -17,7 +17,8 @@ real device as untested until you have tried it.
 - The Rust target: `rustup target add aarch64-linux-android`
 - The Android SDK and NDK. Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) and
   `ANDROID_NDK_HOME` (or `ANDROID_NDK_ROOT`).
-- JDK 17 and Gradle 8.
+- JDK 17 and Gradle 8.7 or newer. The generated project uses the Android Gradle
+  Plugin 8.6.1, which needs 8.7+; CI uses 8.10.2.
 
 `craftui doctor` reports which of these it can find.
 
@@ -64,8 +65,10 @@ Install it on a connected device:
 adb install -r dist/notes-android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`craftui run --platform android` does the build, runs Gradle, and when a device
-is connected installs the APK with `adb install -r` and starts it.
+`craftui run --platform android -p craftui-example-notes` does the build, runs
+Gradle, and when a device is connected installs the APK with `adb install -r`
+and starts it. Pass `-p` with your own package name: without it the CLI builds
+the default `craftui-platform-android` package instead of your app.
 
 Only `arm64-v8a` is built. Emulators on x86-64 machines need an ARM system
 image.

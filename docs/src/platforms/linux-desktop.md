@@ -58,9 +58,15 @@ Direct3D 12 on Windows. A CPU renderer is used when `force_cpu` is set.
 
 ## Editing `.cui` while the app runs
 
-With the `hot-reload` feature (on by default) the desktop runner watches `.cui`
-files and rebuilds the interface when one changes, without recompiling Rust.
-`craftui preview <file.cui>` opens a single file the same way.
+With the `hot-reload` feature (on by default), `run_hot_reload_cui` watches the
+`.cui` file it was given and rebuilds the interface when that file changes,
+without recompiling Rust. `craftui preview <file.cui>` opens a single file the
+same way.
+
+`run_app`, which the window example and the Notes app use, does **not** watch
+anything: editing a `.cui` file leaves a running app unchanged, even with the
+feature enabled. Use `craftui preview` or `run_hot_reload_cui` when you want
+live reload.
 
 Reload interprets the `.cui` file at run time, while a normal build compiles it
 to Rust. The two paths are separate implementations, so check a change in a

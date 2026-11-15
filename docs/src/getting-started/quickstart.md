@@ -6,7 +6,12 @@ file on the way. It assumes the tools from
 
 ## 1. Create a project
 
+Create the project **beside** the `Craftui` checkout, not inside it. A package
+inside that directory is caught by the repository's workspace, which does not
+list it, and Cargo then refuses to build it.
+
 ```bash
+cd ..                # leave the Craftui checkout first
 craftui new my_app
 cd my_app
 ```
