@@ -70,8 +70,12 @@ URL hash follows navigation, and can force the 2D fallback.
 ## Run locally
 
 ```bash
-craftui run --platform web          # builds, then serves on http://localhost:8080
+craftui run --platform web -p craftui-example-notes   # builds, then serves on http://localhost:8080
 ```
+
+Name your own app after `-p`. Without a package the CLI builds the default
+`craftui-platform-web` package, which has no `cdylib`, so the generated page has
+no application bundle to load.
 
 Or serve an existing build with any static server. The server must send
 `.wasm` files as `application/wasm`.
@@ -93,3 +97,7 @@ types, reloads, and checks `localStorage`. Use it as a template:
 ```bash
 node .github/scripts/web-smoke.mjs dist/web /tmp/smoke-output
 ```
+
+The script's checks are written for the Notes app: it looks for the welcome-note
+text, the Notes widget labels and the `craftui-notes/v1` storage key. Run it on a
+Notes build, or replace those checks with your own app's before using it.

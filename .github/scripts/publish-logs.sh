@@ -10,8 +10,12 @@
 #   gh api repos/<owner>/<repo>/git/blobs/<sha> --jq .content | base64 -d | tar xz
 #
 # The blob is not referenced by any branch, so it never shows up in history.
-# Publishing is best-effort: it needs `contents: write`, which pull requests
-# from forks do not get, and it must never fail the job.
+#
+# This script is run by the `publish-logs` job only. That job is the single
+# place in the workflow with `contents: write`, it runs on pushes to `main`
+# alone, and `GH_TOKEN` is passed to the step that runs this script and nowhere
+# else. Pull requests therefore never hold a write token and never publish a
+# blob. Publishing is best-effort and must never fail the job.
 #
 # Usage: .github/scripts/publish-logs.sh <label>
 set -uo pipefail
@@ -29,10 +33,14 @@ fi
 work="$(mktemp -d)"
 # Keep each file to its last 4 MB so one runaway log cannot break the upload.
 mkdir -p "$work/logs"
-for f in "$log_dir"/*; do
-    [ -f "$f" ] || continue
-    tail -c 4194304 "$f" >"$work/logs/$(basename "$f")"
-done
+# The publish job downloads one directory per job (`ci-logs-linux`,
+# `ci-logs-windows`, ...), so walk sub-directories and keep their names. Flat
+# names would collide: every job has its own `test.log` and `clippy.log`.
+while IFS= read -r -d '' f; do
+    rel="${f#"$log_dir"/}"
+    mkdir -p "$work/logs/$(dirname "$rel")"
+    tail -c 4194304 "$f" >"$work/logs/$rel"
+done < <(find "$log_dir" -type f -print0)
 tar -C "$work" -czf "$work/logs.tgz" logs
 # `base64 -w0` is GNU-only; strip the line breaks instead so macOS works too.
 base64 <"$work/logs.tgz" | tr -d '\r\n' >"$work/logs.b64"

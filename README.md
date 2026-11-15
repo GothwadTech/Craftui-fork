@@ -94,6 +94,10 @@ git clone https://github.com/krinry/Craftui
 cd Craftui
 cargo install --path tools/craftui-cli
 
+# Create the app beside the clone, not inside it: a package inside `Craftui`
+# would be caught by that workspace, which does not list it, and Cargo would
+# reject the build.
+cd ..
 craftui new my_app
 cd my_app
 ```

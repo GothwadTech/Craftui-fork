@@ -133,7 +133,7 @@ Built-in icon names include `plus`, `minus`, `check`, `close`, `search`,
 
 ```cui
 export component TextDemo {
-    in property <Option<TextureHandle>> photo;
+    in property <TextureHandle> photo;
 
     Column {
         padding: 16dp;

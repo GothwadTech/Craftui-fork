@@ -389,11 +389,15 @@ pub fn mount_notes_app(
     // Load what was saved. A first run starts with a welcome note. Data that
     // cannot be read is left untouched and saving is switched off.
     let (book, load_error) = match config.storage.load() {
-        None => (Notebook::with_welcome_note(now), None),
-        Some(text) => match Notebook::from_json(&text) {
+        // Nothing saved yet.
+        Ok(None) => (Notebook::with_welcome_note(now), None),
+        Ok(Some(text)) => match Notebook::from_json(&text) {
             Ok(book) => (book, None),
             Err(err) => (Notebook::new(), Some(err.to_string())),
         },
+        // Saved data that cannot be read. Start empty and keep saving off, so
+        // the unreadable file is left as it is.
+        Err(err) => (Notebook::new(), Some(err)),
     };
 
     let screen = NotesScreen::new(cx);
@@ -539,18 +543,29 @@ mod tests {
 
     impl Harness {
         fn start(storage: MemoryStorage, size: (f32, f32)) -> Self {
+            Self::mount(storage.clone(), storage, size)
+        }
+
+        /// Mount with any backend. `inspect` is the cell the test reads saved
+        /// text from, which is the same object for the usual `MemoryStorage`
+        /// case and an empty cell for the backends that cannot save.
+        fn mount(
+            backend: impl NoteStorage + 'static,
+            inspect: MemoryStorage,
+            size: (f32, f32),
+        ) -> Self {
             reset_runtime();
             let cx = Scope::root();
             let mut tree = WidgetTree::new(cx);
             let clock = Rc::new(Cell::new(T0));
             let clock_handle = clock.clone();
-            let config = NotesConfig::new(storage.clone()).with_clock(move || clock_handle.get());
+            let config = NotesConfig::new(backend).with_clock(move || clock_handle.get());
             let (root, ctrl) = mount_notes_app(cx, &mut tree, config);
             tree.set_root(root);
             let mut harness = Self {
                 tree,
                 ctrl,
-                storage,
+                storage: inspect,
                 clock,
                 metrics: WindowMetrics::default(),
             };
@@ -647,12 +662,28 @@ mod tests {
     struct BrokenStorage;
 
     impl NoteStorage for BrokenStorage {
-        fn load(&self) -> Option<String> {
-            None
+        fn load(&self) -> Result<Option<String>, String> {
+            Ok(None)
         }
 
         fn save(&self, _text: &str) -> Result<(), String> {
             Err("disk full".to_string())
+        }
+    }
+
+    /// Storage with saved data that cannot be read back: bad UTF-8, or a file
+    /// the process is not allowed to open. `save` panics, because nothing may
+    /// overwrite data that is still there.
+    #[derive(Clone, Default)]
+    struct UnreadableStorage;
+
+    impl NoteStorage for UnreadableStorage {
+        fn load(&self) -> Result<Option<String>, String> {
+            Err("cannot read notes.json: stream did not contain valid UTF-8".to_string())
+        }
+
+        fn save(&self, _text: &str) -> Result<(), String> {
+            panic!("a session that could not read the notebook must not save over it")
         }
     }
 
@@ -855,6 +886,25 @@ mod tests {
             storage.contents().as_deref(),
             Some("{ this is not a notebook")
         );
+    }
+
+    #[test]
+    fn a_read_error_is_reported_and_never_overwritten() {
+        let h = Harness::mount(UnreadableStorage, MemoryStorage::new(), PHONE);
+        assert_eq!(h.ctrl.note_count(), 0);
+        assert!(h.ctrl.screen.has_storage_error.get());
+        assert!(
+            h.ctrl
+                .screen
+                .storage_error
+                .get()
+                .contains("could not be read")
+        );
+
+        h.ctrl.new_note();
+        h.ctrl.screen.draft_title.set("Typed anyway".to_string());
+        assert_eq!(h.ctrl.screen.editor_status.get(), "Not saved");
+        // `UnreadableStorage::save` panics, so a write attempt fails this test.
     }
 
     #[test]

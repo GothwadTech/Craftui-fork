@@ -193,7 +193,10 @@ points.
   UI.
 - **An effect must not write a signal that it also reads.** It would trigger
   itself forever. Read with `get_untracked()` when you only need the current
-  value, or use `set_if_changed`.
+  value. `set_if_changed` helps only when the update settles on a value that is
+  already stored: it skips the write, and the loop stops. An update that always
+  produces a new value, such as `count + 1`, still loops forever with
+  `set_if_changed`.
 - **Signals belong to the UI thread.** To use the result of background work,
   send it back to the UI thread first (the platform runners provide a
   dispatcher for this).

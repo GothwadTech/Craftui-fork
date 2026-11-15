@@ -9,8 +9,14 @@ use std::rc::Rc;
 
 /// A place to keep one string between runs of the app.
 pub trait NoteStorage {
-    /// The saved text, or `None` when nothing has been saved yet or it cannot be read.
-    fn load(&self) -> Option<String>;
+    /// The saved text.
+    ///
+    /// `Ok(None)` means nothing has been saved yet, so this is a first run.
+    /// `Err` means something *is* saved but cannot be read: bad UTF-8, a
+    /// permission problem, or a browser that refuses access. The app must not
+    /// mistake that for a first run, because the next save would replace data
+    /// the user still has.
+    fn load(&self) -> Result<Option<String>, String>;
     /// Replace the saved text.
     fn save(&self, text: &str) -> Result<(), String>;
 }
@@ -47,8 +53,8 @@ impl MemoryStorage {
 }
 
 impl NoteStorage for MemoryStorage {
-    fn load(&self) -> Option<String> {
-        self.cell.borrow().clone()
+    fn load(&self) -> Result<Option<String>, String> {
+        Ok(self.cell.borrow().clone())
     }
 
     fn save(&self, text: &str) -> Result<(), String> {
@@ -83,8 +89,15 @@ mod file {
     }
 
     impl NoteStorage for FileStorage {
-        fn load(&self) -> Option<String> {
-            std::fs::read_to_string(&self.path).ok()
+        fn load(&self) -> Result<Option<String>, String> {
+            match std::fs::read_to_string(&self.path) {
+                Ok(text) => Ok(Some(text)),
+                // Nothing saved yet: a normal first run.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                // The file is there but unreadable. Reporting `None` here would
+                // start an empty notebook and overwrite it on the next edit.
+                Err(err) => Err(format!("cannot read {}: {err}", self.path.display())),
+            }
         }
 
         /// Write to a temporary file next to the target and rename it into
@@ -152,8 +165,12 @@ mod web {
     }
 
     impl NoteStorage for LocalStorage {
-        fn load(&self) -> Option<String> {
-            Self::storage()?.get_item(&self.key).ok().flatten()
+        fn load(&self) -> Result<Option<String>, String> {
+            let storage = Self::storage()
+                .ok_or_else(|| "localStorage is not available in this browser".to_string())?;
+            storage
+                .get_item(&self.key)
+                .map_err(|_| "the browser refused to read the stored notes".to_string())
         }
 
         fn save(&self, text: &str) -> Result<(), String> {
@@ -174,14 +191,12 @@ mod tests {
     fn memory_storage_shares_state_between_clones() {
         let storage = MemoryStorage::new();
         let handle = storage.clone();
-        assert_eq!(storage.load(), None);
+        assert_eq!(storage.load(), Ok(None));
         storage.save("hello").unwrap();
         assert_eq!(handle.contents().as_deref(), Some("hello"));
         assert_eq!(handle.save_count(), 1);
-        assert_eq!(
-            MemoryStorage::with_contents("x").load().as_deref(),
-            Some("x")
-        );
+        let loaded = MemoryStorage::with_contents("x").load().unwrap();
+        assert_eq!(loaded.as_deref(), Some("x"));
     }
 
     #[test]
@@ -195,12 +210,13 @@ mod tests {
                 .unwrap_or(0)
         ));
         let storage = FileStorage::new(dir.join("nested").join("notes.json"));
-        assert_eq!(storage.load(), None);
+        // A missing file is a first run, not a failure.
+        assert_eq!(storage.load(), Ok(None));
 
         storage.save("first").unwrap();
-        assert_eq!(storage.load().as_deref(), Some("first"));
+        assert_eq!(storage.load().unwrap().as_deref(), Some("first"));
         storage.save("second").unwrap();
-        assert_eq!(storage.load().as_deref(), Some("second"));
+        assert_eq!(storage.load().unwrap().as_deref(), Some("second"));
 
         // The temporary file must not be left behind.
         let leftovers: Vec<_> = std::fs::read_dir(dir.join("nested"))
@@ -209,6 +225,29 @@ mod tests {
             .map(|e| e.file_name())
             .collect();
         assert_eq!(leftovers, vec![std::ffi::OsString::from("notes.json")]);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_file_is_an_error_not_a_first_run() {
+        let dir = std::env::temp_dir().join(format!(
+            "craftui-notes-test-unreadable-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("notes.json");
+        // Invalid UTF-8: the file exists, so the notes must not be replaced by
+        // a fresh notebook on the next save.
+        std::fs::write(&path, [0x7b, 0xff, 0xfe, 0x7d]).unwrap();
+
+        let storage = FileStorage::new(&path);
+        let loaded = storage.load();
+        assert!(loaded.is_err(), "invalid UTF-8 must be an error");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
