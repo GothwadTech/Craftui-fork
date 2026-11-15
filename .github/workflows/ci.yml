@@ -12,20 +12,22 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# `contents: write` is only used by `.github/scripts/publish-logs.sh`, which
-# stores job logs in an unreferenced Git blob. See that script for details.
+# Read-only by default. The only job that needs more is `publish-logs`, which
+# is the only place `contents: write` is granted, and it runs on pushes to
+# `main` only. See `.github/scripts/publish-logs.sh`.
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
     shell: bash
 
+# `GH_TOKEN` is deliberately not defined here: it is passed to the single step
+# in `publish-logs` that needs it, so build scripts and tests cannot read it.
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  GH_TOKEN: ${{ github.token }}
 
 jobs:
   license-guard:
@@ -33,21 +35,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
       - name: Check dependency licenses
         run: .github/scripts/logged.sh deny cargo deny check licenses
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh license-guard
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-license-guard
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   lockfile:
     name: Cargo.lock is up to date
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Re-resolve and compare with the committed lockfile
         run: |
@@ -55,15 +66,22 @@ jobs:
           cargo metadata --format-version 1 >/dev/null
           cp Cargo.lock "$RUNNER_TEMP/ci-logs/Cargo.lock"
           .github/scripts/logged.sh lockfile-diff git diff --exit-code --stat -- Cargo.lock
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-lockfile
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   linux:
     name: Linux (fmt, clippy, tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -97,9 +115,14 @@ jobs:
           cargo fmt --all || true
           git diff >"$RUNNER_TEMP/ci-logs/autofix.patch"
           git checkout -- .
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-linux
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   desktop-matrix:
     name: Test & Clippy (${{ matrix.os }})
@@ -114,6 +137,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -135,15 +160,22 @@ jobs:
           mkdir -p "$log_dir"
           git diff >"$log_dir/autofix.patch"
           git checkout -- .
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh ${{ matrix.label }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-${{ matrix.label }}
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   wasm:
     name: Web WASM (clippy, minimal check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -162,17 +194,25 @@ jobs:
         run: |
           cargo clippy --fix --allow-dirty --allow-staged --locked -p craftui-platform-web --target wasm32-unknown-unknown || true
           cargo fmt --all || true
+          mkdir -p "$RUNNER_TEMP/ci-logs"
           git diff >"$RUNNER_TEMP/ci-logs/autofix.patch"
           git checkout -- .
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-wasm
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   android:
     name: Android (clippy, minimal check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -200,11 +240,17 @@ jobs:
         run: |
           cargo clippy --fix --allow-dirty --allow-staged --locked -p craftui-platform-android --target aarch64-linux-android || true
           cargo fmt --all || true
+          mkdir -p "$RUNNER_TEMP/ci-logs"
           git diff >"$RUNNER_TEMP/ci-logs/autofix.patch"
           git checkout -- .
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh android
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-android
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   # The notes example is the end-to-end proof that one codebase ships to the
   # Web and to Android. Both jobs go through the `craftui` CLI, the same way a
@@ -214,6 +260,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -251,15 +299,22 @@ jobs:
           name: craftui-notes-web
           path: dist/notes-web
           if-no-files-found: ignore
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh notes-web
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-notes-web
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   notes-android:
     name: Notes app (Android APK)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -322,15 +377,22 @@ jobs:
           name: craftui-notes-android-debug-apk
           path: dist/notes-android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: ignore
-      - name: Publish logs
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh notes-android
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-notes-android
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   bench-smoke:
     name: Benchmark smoke check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install Linux system dependencies
@@ -340,9 +402,45 @@ jobs:
       - name: Run perf suite smoke benchmark
         run: |
           .github/scripts/logged.sh bench-build cargo bench --locked -p craftui --bench perf_suite --no-run
-          cargo bench --locked -p craftui --bench perf_suite -- --quick --json > bench-smoke.json
-          cp bench-smoke.json "$RUNNER_TEMP/ci-logs/bench-smoke.json"
-          python3 -m json.tool bench-smoke.json > /dev/null
-      - name: Publish logs
+          mkdir -p "$RUNNER_TEMP/ci-logs"
+          cargo bench --locked -p craftui --bench perf_suite -- --quick --json > "$RUNNER_TEMP/ci-logs/bench-smoke.json"
+          python3 -m json.tool "$RUNNER_TEMP/ci-logs/bench-smoke.json" > /dev/null
+      - name: Upload the job logs
         if: ${{ always() }}
-        run: .github/scripts/publish-logs.sh bench-smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-bench-smoke
+          path: ${{ runner.temp }}/ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Keeps the `ci-logs` blob feature: tools that can only reach api.github.com
+  # can read `repos/<owner>/<repo>/git/blobs/<sha>`. It runs after every job,
+  # on pushes to `main` only, and it is the only job with `contents: write`.
+  # Pull requests never reach it, so PR code never holds a write token and CI
+  # logs are never published from a PR.
+  publish-logs:
+    name: Publish job logs
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [license-guard, lockfile, linux, desktop-matrix, wasm, android, notes-web, notes-android, bench-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download the job logs
+        # One directory per job: their log file names collide. The step is
+        # allowed to fail, because a run where no job produced logs has nothing
+        # to publish and must not turn into a red build.
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-logs-*
+          path: ${{ runner.temp }}/ci-logs
+          merge-multiple: false
+      - name: Publish the logs as one Git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/publish-logs.sh "${GITHUB_RUN_ID}"
